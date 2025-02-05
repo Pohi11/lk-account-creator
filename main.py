@@ -20,6 +20,7 @@ from datetime import date
 import os
 from colorama import Fore, Back, Style
 from selenium.webdriver.chrome.service import Service
+from twocaptcha import TwoCaptcha
 #from geoip import geolite2
 global regionsBRUH
 regionsBRUH = []
@@ -175,7 +176,6 @@ def startGEN(URLURL, region):
             print(f"Error: ChromeDriver not found at {PATH}")
             return
             
-        cls()
         global totalcounter
         global failedaccounts
         global accountNAME 
@@ -230,25 +230,112 @@ def startGEN(URLURL, region):
         # Second password field
         enterPASS2 = wait.until(EC.presence_of_element_located((By.XPATH, """/html/body/div[2]/div/main/div[3]/div/div[2]/div/div[2]/div/div[4]/div[1]/input""")))
         enterPASS2.send_keys(accountPASS)
-        time.sleep(2)
+        time.sleep(1)
         enterPASS2.send_keys(Keys.RETURN)
 
-        # Find the element to scroll to
-        scroll_element = wait.until(EC.presence_of_element_located((By.XPATH, """/html/body/div[2]/div/main/div[3]/div/div[2]/div/div[2]/div/div[1]""")))
+        # Find the terms of service container using ID
+        terms_element = wait.until(EC.presence_of_element_located((By.ID, "tos-scrollable-area")))
+        terms_element.click()  # Click to focus on the element
+        terms_element.send_keys(Keys.END)
         time.sleep(1)  # Give a moment for the scroll to complete
+        
+        # Alternative JavaScript approach if the above doesn't work
+        driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", terms_element)
 
-        # Send END key to scroll to bottom
-        scroll_element.send_keys(Keys.END)
-        time.sleep(2)  # Give a moment for the scroll to complete
-        
-        # Agreement checkboxes and button
-        agree1 = wait.until(EC.presence_of_element_located((By.XPATH, """/html/body/div[2]/div/main/div[3]/div/div[2]/div/div[2]/div/div[3]/div/div/div/input"""))).click()
-        
-        agree2 = wait.until(EC.presence_of_element_located((By.XPATH, """/html/body/div[2]/div/main/div[3]/div/div[2]/div/div[3]/button/div"""))).click()
-        
+        accept_thingy = wait.until(EC.presence_of_element_located((By.ID, "tos-checkbox")))
+        accept_thingy.click()
+        accept_thingy2 = wait.until(EC.presence_of_element_located((By.XPATH, """/html/body/div[2]/div/main/div[3]/div/div[2]/div/div[3]/button/div/span""")))
+        accept_thingy2.click()
         time.sleep(1)
 
+
+
+
+
+
         
+        # Comment out or remove the cls() call at the start of startGEN
+        # cls()  # Remove this line
+        
+        try:
+            print("\n=== Starting hCaptcha Solving ===")
+            print("Looking for hCaptcha sitekey in page source...")
+            
+            page_source = driver.page_source
+            site_key_match = re.search(r'sitekey=([^&"\s]+)', page_source)
+            
+            if not site_key_match:
+                raise Exception("Could not find hCaptcha sitekey in page source")
+                
+            site_key = site_key_match.group(1)
+            print("Found sitekey:", site_key)
+            
+            solver = TwoCaptcha(capKEY)
+            
+            print("Sending hCaptcha to 2captcha...")
+            result = solver.hcaptcha(
+                sitekey=site_key,
+                url=driver.current_url
+            )
+            
+            code = result["code"]
+            print("Got solution:", code[:20] + "...")
+            
+            # Apply the solution using JavaScript
+            driver.execute_script("""
+                // Find and set the hCaptcha response textarea
+                var textareas = document.getElementsByTagName('textarea');
+                for (var i = 0; i < textareas.length; i++) {
+                    if (textareas[i].name && textareas[i].name.indexOf('h-captcha-response') !== -1) {
+                        textareas[i].innerHTML = arguments[0];
+                        // Trigger a change event
+                        var event = new Event('change', { bubbles: true });
+                        textareas[i].dispatchEvent(event);
+                    }
+                }
+            """, code)
+            
+            print("Applied solution to hCaptcha")
+            time.sleep(2)
+            
+            # Try to find and click the verify button, even if not visible
+            try:
+                driver.execute_script("""
+                    // Find and click the verify button regardless of visibility
+                    var buttons = document.querySelectorAll('div.button-submit.button[title="Verify Answers"]');
+                    if (buttons.length > 0) {
+                        buttons[0].style.display = 'block';  // Make it visible
+                        buttons[0].click();
+                    }
+                """)
+                print("Attempted to click verify button via JavaScript")
+                
+            except Exception as e:
+                print(f"Error with verify button: {str(e)}")
+                # Additional fallback method
+                try:
+                    driver.execute_script("""
+                        document.querySelector('iframe[title*="hCaptcha"]').contentWindow.postMessage(
+                            {type: 'submit'}, '*'
+                        );
+                    """)
+                    print("Attempted iframe message submission")
+                except Exception as e:
+                    print(f"Error with iframe submission: {str(e)}")
+                
+            print("Attempted to verify captcha")
+            time.sleep(5)
+            
+        except Exception as e:
+            print(f"\nError solving hCaptcha: {str(e)}")
+            print(f"Current URL: {driver.current_url}")
+            failedaccounts = failedaccounts + 1
+            driver.quit()
+            return
+
+        # Remove or comment out the reCAPTCHA handling code that follows
+        # (the part with soup = BeautifulSoup(...) and everything related to g-recaptcha-response)
+
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         kValue = soup.find("div", {"class": "grecaptcha-logo"})
         kValue = str(kValue)
@@ -315,7 +402,7 @@ def startGEN(URLURL, region):
         if win is not None:
             p.write(accountNAME+":"+accountPASS+"\n")#+":"+accountNAME+"@gmail.com\n")
             recovery(region)
-            cls()
+            # cls()
             totalcounter = totalcounter + 1
             os.system(f"title LeagueKingdom Account Creator ({totalcounter} Account(s) Created, {failedaccounts} Accounts Failed)")
 
@@ -377,7 +464,7 @@ def Menu():
 
 #auth()
 Menu()
-cls()
+# cls()
 print(f"All accounts created, {totalcounter} successfully created and {failedaccounts} failed.")
 input("Please press enter to close the program")
 
